@@ -1,0 +1,149 @@
+---
+title: "project write up"
+author: "xinrong"
+date: "Wednesday, February 18, 2015"
+output: html_document
+---
+**Data Exploration**  
+After load the data into R studio, I explore the data for variable quality. I found there are 160 variables in the training and testing set, so the first thing is to identify which variables I shall use in my modeling procedure.  
+
+I found there are 100 variables with 98% missing, these variables won't provide enough information since they won't vary much with 'classe' variable. It makes no sense to impute missing values of such high missing rate, so I almost sure I want to get rid of them.  
+
+```{r echo=FALSE,message=FALSE, cache=FALSE}
+setwd("C:/Users/Xin/Dropbox/Courses/Practical Machine Learning")
+#at work
+#setwd("C:/Users/xlei/Dropbox/Courses/Practical Machine Learning")  
+training = read.csv("pml-training.csv")
+testing = read.csv("pml-testing.csv")
+
+#memory.limit(size=66207) #run this, i just don't want this show in the rmd
+
+library(caret)
+
+ms<-sapply(training, function(x) sum(is.na(x)|as.character(x)==""))
+ms2<-as.data.frame(ms)
+msTF<-sapply(ms, function(x) ifelse(x>=0.9*dim(training)[1],TRUE,FALSE))
+ms2<-cbind(ms2,msTF,!msTF)
+training2<-training[,!msTF]  #set removed variables with 90% missing
+training2<-training2[,-1]#remove row numer X
+
+#remove variables not found in testing set
+
+```
+
+**Reduce Dimentions**  
+To give myself a peaceful mind, I check the plots of classe with this group of variables to make sure they are not happen to be perfectly correlated with 'classe'. Below is an example of such plot. The randomly spread dots shows it has no correlation with 'classe', and other plots follow the same pattern.
+
+```{r, echo=FALSE,message=FALSE, cache=FALSE}
+
+attach(training)
+plot(X,kurtosis_roll_belt,col=classe)
+legend("topright",legend=c("A","B","C","D","E"),col=c("black","red","green","blue","deepskyblue"),pch=19)
+detach(training)
+
+```
+  
+Now I only need to deal 60 variables, wonderful!  Or even better, 59! The variable 'X' looks like a row variable and the 'classie' seems organized accordingly. That won't happen in real world, so I removed this variable from the training set as well.  
+
+I checked the data summary quality, and they seems all good and I am ready for modeling.  
+
+**Time for Modeling!**  
+*Data split*  
+Noticed that the testing data downloaded from the web can't be used to evaluate prediction quality, I need to prepare my own training and testing set in order to do cross validation.  Since I will use the downloaded testing data as my validation set, I used 70% instead of 60% of the downloaded training data as my own training data set.  
+
+In the data exploration step, I noticed that the 19620 records are from 6 individuals in about 20 time stamps.  This means that my observations could be very much correlated. So I did not put any efforts with linear classification models, and focus on the tree based model, and add one SVM model. 
+
+*Tree*  
+My first regression partition model is very disappointing. It has less than 50% of accuracy. Since it is my first try and the fancy tree plot can really make a boring report looks pretty, I can't help to show it here.  
+
+```{r,echo=FALSE,message=FALSE, cache=FALSE}
+
+set.seed(8484)
+a<-as.character(training2[,4]) #timestamp
+cvtd<-as.POSIXct(a, format="%d/%m/%Y %H:%M")
+cvtd<-as.numeric(cvtd)
+#colnames(training2)
+training3<-training2[,c(-4,-5)]#remove new window and cvtd time stamp
+training3<-cbind(training3,cvtd)
+
+
+train = sample(1:dim(training3)[1],size=0.7*dim(training3)[1],replace=F)
+mytrain<-training3[train,]
+mytest<- training3[-train,] 
+
+fitTree<-train(classe~.,method='rpart',data=mytrain) #this works
+predTree<-predict(fitTree,newdata=mytest) #,type = "prob"
+confusionMatrix(predTree,mytest$classe)
+
+# plot tree
+library(rattle)
+fancyRpartPlot(fitTree$finalModel) 
+
+```
+
+*SVM*  
+The supporter vector machine is a huge improve in accuracy, now I can have over 80% of my testing data correctly classified! 
+```{r,echo=FALSE,message=FALSE, cache=FALSE,warning=FALSE}
+fitSVM<-train(classe~.,method='svmLinear',data=mytrain) #this works
+predSVM<-predict(fitSVM,newdata=mytest) #,type = "prob"
+confusionMatrix(predSVM,mytest$classe)
+
+```
+
+*Random Forest!*  
+I did not stop here since I have not try the famous random forest that everyone loves. It turns out that it is popular for a good reason, my accuracy is now 99.85%, and other indicators looks quite good as well.  
+```{r,echo=FALSE,message=FALSE, cache=FALSE}
+fitRF<-train(classe~.,method='rf',data=mytrain) #this works
+predRF<-predict(fitRF,newdata=mytest) #,type = "prob"
+confusionMatrix(predRF,mytest$classe)
+
+```
+  
+Just out of curiosity, I tried a combined model and got 100% accuracy on my testing set. HoweverI am aware that fitting training data perfectly could lead to  overfitting.
+ 
+```{r,echo=FALSE,message=FALSE, cache=FALSE}
+predAll<-data.frame(predRF,predSVM,newdata=mytest)
+names(predAll)[59]<-"classe"
+
+combFit<-train(classe~.,method='rf',data=predAll)
+predComb<-predict(combFit,newdata=predAll)
+
+confusionMatrix(predComb,mytest$classe)
+
+
+```
+
+**Wrap Up**  
+I did not use the combined model on the final prediction, because the testing data only have 20 data point, and random forest is good enough.  My final prediction is based on random forest.  
+
+*Thank you and hope you all had fun with this project!*
+
+
+```{r,echo=FALSE,include=FALSE, cache=FALSE}
+
+#testing data only keep valid var
+
+
+#myvars <- colnames(testing) %in% colnames(mytrain)
+#newtest<-testing[myvars]
+#newtest<-cbind(newtest,'NULL')
+#colnames(newtest)[57]<-"classe"
+
+
+#predTestRF<-predict(fitRF,newdata=testing) #,type = "prob"
+
+
+#answers = predTestRF
+
+#pml_write_files = function(x){
+#  n = length(x)
+#  for(i in 1:n){
+#    filename = paste0("problem_id_",i,".txt")
+#    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+#  }
+#}
+
+#pml_write_files(answers)
+
+```
+
